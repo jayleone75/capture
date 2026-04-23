@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#1a1410">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Capture">
+  <meta name="description" content="Field notes. Catch the thought. Sort it later.">
+
+  <title>Capture — Field Notes</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-label">FIELD NOTES · v1</div>
+        <h1 class="brand-title">Capture<span class="accent">.</span></h1>
+        <div class="brand-tagline">Catch the thought. Sort it later.</div>
+      </div>
+      <div class="view-toggle" role="tablist">
+        <button class="view-btn active" data-view="capture" role="tab">Capture</button>
+        <button class="view-btn" data-view="review" role="tab">
+          Review<span id="note-count-badge"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Capture View -->
+    <section id="capture-view" class="view active">
+      <div class="input-wrap">
+        <textarea
+          id="note-input"
+          placeholder="What's the thought? Driving, gym, gas station — just get it down."
+          rows="5"
+          autocomplete="off"
+          autocapitalize="sentences"
+          spellcheck="true"
+        ></textarea>
+        <button id="mic-btn" class="mic-btn" aria-label="Toggle voice input">
+          <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div id="recording-indicator" class="recording-indicator hidden">
+        ● RECORDING — tap mic to stop
+      </div>
+
+      <div class="tag-section">
+        <div class="tag-group-label">Primary tag</div>
+        <div id="primary-tags" class="tag-groups"></div>
+
+        <div class="tag-group-label" style="margin-top: 16px;">Secondary tags (optional)</div>
+        <div id="secondary-hint" class="tag-hint">Select primary first, then add more</div>
+        <div id="secondary-tags" class="tag-groups hidden"></div>
+
+        <div class="tag-group-label" style="margin-top: 12px;">Custom</div>
+        <div id="custom-tag-section">
+          <div id="custom-display" class="tag-groups"></div>
+          <div id="custom-add-inline" class="custom-add-row">
+            <span class="tag-chip custom-chip dashed" id="add-custom-btn">+ Add custom</span>
+          </div>
+          <div id="custom-input-row" class="custom-add-row hidden">
+            <input id="custom-input" type="text" placeholder="New tag name..." maxlength="40">
+            <button class="action-btn small" id="custom-confirm">✓</button>
+            <button class="action-btn small" id="custom-cancel">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <button id="save-btn" class="action-btn primary full" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Save Note
+      </button>
+
+      <div id="recent-preview" class="recent-preview hidden">
+        <div class="tag-group-label" style="margin-top: 28px; margin-bottom: 10px;">Recent captures</div>
+        <div id="recent-list"></div>
+        <button id="view-all-btn" class="action-btn full" style="margin-top: 10px;"></button>
+      </div>
+    </section>
+
+    <!-- Review View -->
+    <section id="review-view" class="view">
+      <div id="review-empty" class="empty-state">No notes yet. Capture something.</div>
+
+      <div id="review-content" class="hidden">
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="search-input" type="text" placeholder="Search notes..." autocomplete="off">
+        </div>
+
+        <div id="active-filter" class="active-filter hidden"></div>
+
+        <div id="brief-export-section" class="brief-export-section">
+          <div class="tag-group-label">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align: middle; margin-right: 5px;"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            Export briefs · by tag
+          </div>
+          <div id="brief-list"></div>
+        </div>
+
+        <div class="tag-group-label" id="notes-list-label">All notes</div>
+        <div id="notes-list"></div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      NOTES SAVED LOCALLY · EXPORT WHEN YOU'RE BACK AT YOUR DESK
+    </footer>
+  </div>
+
+  <!-- Toast for feedback -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Install prompt -->
+  <div id="install-prompt" class="install-prompt hidden">
+    <div class="install-content">
+      <div class="install-title">Install Capture</div>
+      <div class="install-body">Add to home screen for one-tap access.</div>
+      <div class="install-actions">
+        <button class="action-btn" id="install-dismiss">Not now</button>
+        <button class="action-btn primary" id="install-confirm">Install</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
