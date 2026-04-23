@@ -160,28 +160,52 @@ function setupSpeechRecognition() {
   recognition.interimResults = true;
   recognition.lang = 'en-US';
 
+  // Baseline: whatever was in the textarea BEFORE recording started.
+  // During a session, the textarea is always: baseline + finalTranscript + interim
+  // This prevents the echo bug where interim updates would pile on top of committed text.
+  let baseline = '';
   let finalTranscript = '';
+
+  recognition.onstart = () => {
+    // Capture current textarea content as the baseline; anything dictated appends to it.
+    baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
+    finalTranscript = '';
+  };
+
   recognition.onresult = (event) => {
     let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    // Rebuild final + interim from scratch every time based on event.results.
+    // Each result is either final or interim; once final, it stays final.
+    // We iterate ALL results (not just from resultIndex) and categorize, so we never double-count.
+    finalTranscript = '';
+    for (let i = 0; i < event.results.length; i++) {
       const transcript = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
-        finalTranscript += transcript + ' ';
+        finalTranscript += transcript;
       } else {
         interim += transcript;
       }
     }
-    const textarea = document.getElementById('note-input');
-    const base = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '');
-    state.currentText = base + finalTranscript + (interim ? ` [listening...] ${interim}` : '');
-    textarea.value = state.currentText;
+
+    // Construct the display text deterministically from components.
+    const separator = baseline && !baseline.endsWith(' ') ? ' ' : '';
+    const committed = baseline + separator + finalTranscript.trim();
+    const displayText = interim.trim()
+      ? committed + (committed && !committed.endsWith(' ') ? ' ' : '') + `[listening...] ${interim.trim()}`
+      : committed;
+
+    state.currentText = displayText;
+    document.getElementById('note-input').value = displayText;
     updateSaveButton();
   };
 
   recognition.onend = () => {
     state.isListening = false;
-    state.currentText = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
-    document.getElementById('note-input').value = state.currentText;
+    // Strip the interim marker and settle the final text.
+    const clean = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
+    state.currentText = clean;
+    document.getElementById('note-input').value = clean;
+    baseline = '';
     finalTranscript = '';
     updateMicUI();
     updateSaveButton();
@@ -192,6 +216,10 @@ function setupSpeechRecognition() {
     updateMicUI();
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       toast('Mic permission denied. Check browser settings.');
+    } else if (e.error === 'no-speech') {
+      // Silent — this fires when user pauses, not actually an error worth toasting
+    } else if (e.error !== 'aborted') {
+      toast('Voice error: ' + e.error);
     }
   };
 }
@@ -223,6 +251,9 @@ function wireEventListeners() {
 
   // Mic button
   document.getElementById('mic-btn').addEventListener('click', toggleListening);
+
+  // Clear button — wipes the textarea, works whether or not mic is recording
+  document.getElementById('clear-btn').addEventListener('click', clearInput);
 
   // Save button
   document.getElementById('save-btn').addEventListener('click', saveNote);
@@ -273,6 +304,18 @@ function wireEventListeners() {
 // ============================================================================
 // Actions
 // ============================================================================
+
+function clearInput() {
+  // Stop recording if active — clean slate
+  if (state.isListening && recognition) {
+    try { recognition.stop(); } catch (e) {}
+  }
+  state.currentText = '';
+  document.getElementById('note-input').value = '';
+  updateSaveButton();
+  // Refocus so user can immediately start typing or tap mic again
+  document.getElementById('note-input').focus();
+}
 
 function toggleListening() {
   if (!recognition) {
@@ -575,8 +618,16 @@ function renderCustomTagSection() {
 
 function updateSaveButton() {
   const btn = document.getElementById('save-btn');
+  const clearBtn = document.getElementById('clear-btn');
   const text = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
   btn.disabled = !text;
+  // Show clear button whenever there's any text (including interim "listening..." content)
+  const hasAnyContent = (state.currentText || '').trim().length > 0;
+  if (hasAnyContent) {
+    clearBtn.classList.remove('hidden');
+  } else {
+    clearBtn.classList.add('hidden');
+  }
 }
 
 function updateMicUI() {

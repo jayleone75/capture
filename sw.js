@@ -1,7 +1,7 @@
 // Capture PWA — Service Worker
 // Simple cache-first strategy for the app shell
 
-const CACHE_NAME = 'capture-v1';
+const CACHE_NAME = 'capture-v2';
 const ASSETS = [
   './',
   './index.html',

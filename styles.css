@@ -162,9 +162,6 @@ body {
 }
 
 .mic-btn {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
   width: 44px;
   height: 44px;
   border-radius: 50%;
@@ -177,6 +174,60 @@ body {
   justify-content: center;
   transition: all 0.2s ease;
   -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+
+.input-actions {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input-action-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: var(--bg-mid);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+
+.input-action-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.input-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.clear-btn {
+  width: 36px;
+  height: 36px;
+  opacity: 0.7;
+}
+
+.clear-btn:hover {
+  border-color: var(--danger);
+  color: #f0c0c0;
+  background: rgba(139, 46, 46, 0.3);
+  opacity: 1;
+}
+
+.clear-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .mic-btn:hover {
