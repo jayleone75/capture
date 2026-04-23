@@ -154,16 +154,6 @@ async function init() {
   });
 }
 
-// Debug log for speech recognition — viewable via footer version button
-let speechDebugLog = [];
-
-function logSpeechEvent(entry) {
-  const timestamp = new Date().toISOString().slice(11, 23);
-  speechDebugLog.push(`[${timestamp}] ${entry}`);
-  // Keep last 100 entries
-  if (speechDebugLog.length > 100) speechDebugLog.shift();
-}
-
 function setupSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return;
@@ -173,29 +163,20 @@ function setupSpeechRecognition() {
   recognition.interimResults = true;
   recognition.lang = 'en-US';
 
-  // State held across onresult events for this recording session.
+  // Mobile Chrome emits results as a growing tree: each onresult event includes all
+  // previous finalized results plus one new longer version. Guards below handle this.
   let baseline = '';
-  let committedChunks = [];      // ordered list of finalized phrases we've accepted
-  let processedResultIds = new Set(); // dedup by result identity
+  let committedChunks = [];
+  let processedResultIds = new Set();
 
   recognition.onstart = () => {
     baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     committedChunks = [];
     processedResultIds = new Set();
-    speechDebugLog = [];
-    logSpeechEvent(`START — baseline: "${baseline}"`);
   };
 
   recognition.onresult = (event) => {
     let latestInterim = '';
-
-    // Log raw event data for diagnostics
-    const resultSummary = [];
-    for (let i = 0; i < event.results.length; i++) {
-      const r = event.results[i];
-      resultSummary.push(`[${i}]${r.isFinal?'F':'i'}:"${r[0].transcript.trim()}"`);
-    }
-    logSpeechEvent(`onresult (resultIndex=${event.resultIndex}, len=${event.results.length}): ${resultSummary.join(' ')}`);
 
     for (let i = 0; i < event.results.length; i++) {
       const result = event.results[i];
@@ -203,64 +184,53 @@ function setupSpeechRecognition() {
       if (!transcript) continue;
 
       if (result.isFinal) {
-        // Build a unique-ish identifier combining index AND the transcript text.
-        // If Chrome re-emits the same text at the same index, this will be seen.
-        // If it re-emits at a DIFFERENT index, we still catch it via the text match below.
         const resultId = `${i}:${transcript.toLowerCase()}`;
 
-        if (processedResultIds.has(resultId)) {
-          logSpeechEvent(`  SKIP (already processed id=${resultId})`);
-          continue;
-        }
+        // Guard 1: already processed this exact result
+        if (processedResultIds.has(resultId)) continue;
 
-        // Also check: is this text already in committed chunks? Exact match = duplicate.
+        // Guard 2: text already committed exactly
         const tLower = transcript.toLowerCase();
         const alreadyCommitted = committedChunks.some(c => c.toLowerCase() === tLower);
         if (alreadyCommitted) {
-          logSpeechEvent(`  SKIP (text already committed: "${transcript}")`);
           processedResultIds.add(resultId);
           continue;
         }
 
-        // Check: is this text a prefix/suffix of something we committed? Likely duplicate growth.
+        // Guard 3: text is a growing version of the last committed chunk
         const lastCommitted = committedChunks[committedChunks.length - 1] || '';
         const lLower = lastCommitted.toLowerCase();
         if (lLower && tLower !== lLower) {
-          // If new text starts with last committed OR last committed starts with new text,
-          // it's probably the same phrase at a different completion stage.
           if (tLower.startsWith(lLower) && tLower.length > lLower.length) {
-            // Extend the last chunk — replace it with the longer version
-            logSpeechEvent(`  EXTEND ("${lastCommitted}" -> "${transcript}")`);
+            // Extend: replace last chunk with the longer version
             committedChunks[committedChunks.length - 1] = transcript;
             processedResultIds.add(resultId);
             continue;
           }
           if (lLower.startsWith(tLower)) {
-            // New text is a prefix of what we already have — skip
-            logSpeechEvent(`  SKIP (prefix of existing)`);
+            // New is a prefix of existing — skip
             processedResultIds.add(resultId);
             continue;
           }
         }
 
-        // Genuinely new chunk — commit it
+        // Genuinely new chunk
         committedChunks.push(transcript);
         processedResultIds.add(resultId);
-        logSpeechEvent(`  COMMIT ("${transcript}")`);
       } else {
         latestInterim = transcript;
       }
     }
 
-    // Build display text from components — never append, always rebuild.
+    // Build display text with proper spacing
     const finalText = committedChunks.join(' ');
-    const separator = baseline && !baseline.endsWith(' ') ? ' ' : '';
-    const committed = (baseline + separator + finalText).trim();
+    const sep1 = baseline && finalText && !baseline.endsWith(' ') ? ' ' : '';
+    const committed = (baseline + sep1 + finalText).trim();
 
     let displayText;
     if (latestInterim) {
-      const interimSep = committed && !committed.endsWith(' ') ? ' ' : '';
-      displayText = committed + interimSep + `[listening...] ${latestInterim}`;
+      const sep2 = committed && !committed.endsWith(' ') ? ' ' : '';
+      displayText = committed + sep2 + `[listening...] ${latestInterim}`;
     } else {
       displayText = committed;
     }
@@ -275,7 +245,6 @@ function setupSpeechRecognition() {
     const clean = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     state.currentText = clean;
     document.getElementById('note-input').value = clean;
-    logSpeechEvent(`END — final text: "${clean}"`);
     baseline = '';
     committedChunks = [];
     processedResultIds = new Set();
@@ -286,12 +255,11 @@ function setupSpeechRecognition() {
   recognition.onerror = (e) => {
     state.isListening = false;
     updateMicUI();
-    logSpeechEvent(`ERROR: ${e.error}`);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       toast('Mic permission denied. Check browser settings.');
-    } else if (e.error === 'no-speech') {
+    } else if (e.error === 'no-speech' || e.error === 'aborted') {
       // Silent
-    } else if (e.error !== 'aborted') {
+    } else {
       toast('Voice error: ' + e.error);
     }
   };
@@ -398,23 +366,16 @@ function showChangelog() {
   const modeLabel = voiceMode === 'keyboard' ? 'Keyboard mic (Gboard)' : 'Web Speech API (auto)';
 
   const changelogText = v.changes.join('\n\n');
-  const debugText = speechDebugLog.length > 0
-    ? '\n\n─── LAST VOICE SESSION LOG ───\n' + speechDebugLog.join('\n')
-    : '\n\n(No voice session logged yet — record something, then come back here.)';
 
   const fullText =
     `Capture ${v.number} · ${v.date}\n\n` +
     `Voice mode: ${modeLabel}\n\n` +
-    `─── CHANGELOG ───\n${changelogText}` +
-    debugText;
-
-  // Use a prompt-style dialog so user can copy the text. Fallback to alert.
-  const choice = confirm(
-    fullText +
-    '\n\n─────────\n' +
+    `─── CHANGELOG ───\n${changelogText}\n\n` +
+    '─────────\n' +
     'OK: close\n' +
-    'Cancel: show options menu'
-  );
+    'Cancel: show options menu';
+
+  const choice = confirm(fullText);
 
   if (!choice) {
     showOptionsMenu();
@@ -426,9 +387,8 @@ function showOptionsMenu() {
   const options =
     'Options:\n\n' +
     '1 — Switch voice mode (current: ' + (current === 'keyboard' ? 'keyboard mic' : 'Web Speech') + ')\n' +
-    '2 — Force refresh (nuke cache, reload fresh)\n' +
-    '3 — Copy debug log to clipboard\n\n' +
-    'Type 1, 2, or 3:';
+    '2 — Force refresh (nuke cache, reload fresh)\n\n' +
+    'Type 1 or 2:';
 
   const input = prompt(options, '');
   if (input === '1') {
@@ -438,14 +398,6 @@ function showOptionsMenu() {
     window.location.reload();
   } else if (input === '2') {
     forceRefresh();
-  } else if (input === '3') {
-    const log = speechDebugLog.join('\n') || '(empty)';
-    navigator.clipboard.writeText(log).then(() => {
-      alert('Debug log copied to clipboard. Paste it into Claude chat.');
-    }).catch(() => {
-      // Fallback — show in a prompt so user can manually copy
-      prompt('Copy this debug log:', log);
-    });
   }
 }
 
