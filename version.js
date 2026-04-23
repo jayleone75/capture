@@ -7,12 +7,13 @@
 // ============================================================================
 
 const APP_VERSION = {
-  number: 'v2.1',
+  number: 'v2.2',
   date: '2026-04-22',
-  label: 'voice echo fix + clear button + version display',
+  label: 'mobile voice echo fix (Android Chrome)',
   changes: [
+    'v2.2 (Apr 22) — Fixed voice echo on mobile Chrome/Android: dedup against duplicate finalized results',
     'v2.1 (Apr 22) — Visible version display, better PWA refresh',
-    'v2.0 (Apr 22) — Fixed voice transcription echo, added Clear button',
+    'v2.0 (Apr 22) — Fixed voice transcription echo on desktop, added Clear button',
     'v1.0 (Apr 22) — Initial release: capture, tag, review, export'
   ]
 };

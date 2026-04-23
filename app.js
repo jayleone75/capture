@@ -163,39 +163,79 @@ function setupSpeechRecognition() {
   recognition.interimResults = true;
   recognition.lang = 'en-US';
 
-  // Baseline: whatever was in the textarea BEFORE recording started.
-  // During a session, the textarea is always: baseline + finalTranscript + interim
-  // This prevents the echo bug where interim updates would pile on top of committed text.
+  // State held across onresult events for this recording session.
+  //
+  // Mobile browsers (especially Chrome on Android and Safari on iOS) emit duplicate
+  // finalized results — the same phrase arrives 2-3 times across successive events
+  // with different result indices. Desktop Chrome does NOT do this.
+  //
+  // Strategy:
+  //   1. Track a baseline (textarea contents when recording started — untouched during session)
+  //   2. Commit finalized chunks, deduped against the *most recently committed* chunk
+  //      (recency-based, not global — so saying "very very fast" still works correctly)
+  //   3. Always use only the latest interim result as the live preview
   let baseline = '';
-  let finalTranscript = '';
+  let committedChunks = [];      // ordered list of finalized phrases we've accepted
+  let lastFinalResultIndex = -1;
 
   recognition.onstart = () => {
-    // Capture current textarea content as the baseline; anything dictated appends to it.
     baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
-    finalTranscript = '';
+    committedChunks = [];
+    lastFinalResultIndex = -1;
   };
 
   recognition.onresult = (event) => {
-    let interim = '';
-    // Rebuild final + interim from scratch every time based on event.results.
-    // Each result is either final or interim; once final, it stays final.
-    // We iterate ALL results (not just from resultIndex) and categorize, so we never double-count.
-    finalTranscript = '';
+    let latestInterim = '';
+
     for (let i = 0; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript;
+      const result = event.results[i];
+      const transcript = result[0].transcript.trim();
+      if (!transcript) continue;
+
+      if (result.isFinal) {
+        // Only process results with an index we haven't handled yet.
+        // This is the primary guard against Chrome-Android re-emitting earlier finalized
+        // results in a subsequent onresult event.
+        if (i <= lastFinalResultIndex) continue;
+
+        // Secondary guard: if this exact text matches what we last committed,
+        // it's a duplicate emission — skip it.
+        const lastCommitted = committedChunks[committedChunks.length - 1] || '';
+        if (transcript.toLowerCase() === lastCommitted.toLowerCase()) {
+          lastFinalResultIndex = i;
+          continue;
+        }
+
+        // Tertiary guard: if the new chunk is contained in the last committed chunk
+        // (or vice versa), it's likely a partial re-emission — skip.
+        const tLower = transcript.toLowerCase();
+        const lLower = lastCommitted.toLowerCase();
+        if (lLower && (lLower.includes(tLower) || tLower.includes(lLower)) &&
+            Math.abs(tLower.length - lLower.length) < 4) {
+          lastFinalResultIndex = i;
+          continue;
+        }
+
+        committedChunks.push(transcript);
+        lastFinalResultIndex = i;
       } else {
-        interim += transcript;
+        // Always overwrite interim with the latest.
+        latestInterim = transcript;
       }
     }
 
-    // Construct the display text deterministically from components.
+    // Build display text from components — never append, always rebuild.
+    const finalText = committedChunks.join(' ');
     const separator = baseline && !baseline.endsWith(' ') ? ' ' : '';
-    const committed = baseline + separator + finalTranscript.trim();
-    const displayText = interim.trim()
-      ? committed + (committed && !committed.endsWith(' ') ? ' ' : '') + `[listening...] ${interim.trim()}`
-      : committed;
+    const committed = (baseline + separator + finalText).trim();
+
+    let displayText;
+    if (latestInterim) {
+      const interimSep = committed && !committed.endsWith(' ') ? ' ' : '';
+      displayText = committed + interimSep + `[listening...] ${latestInterim}`;
+    } else {
+      displayText = committed;
+    }
 
     state.currentText = displayText;
     document.getElementById('note-input').value = displayText;
@@ -204,12 +244,12 @@ function setupSpeechRecognition() {
 
   recognition.onend = () => {
     state.isListening = false;
-    // Strip the interim marker and settle the final text.
     const clean = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     state.currentText = clean;
     document.getElementById('note-input').value = clean;
     baseline = '';
-    finalTranscript = '';
+    committedChunks = [];
+    lastFinalResultIndex = -1;
     updateMicUI();
     updateSaveButton();
   };
@@ -220,7 +260,7 @@ function setupSpeechRecognition() {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       toast('Mic permission denied. Check browser settings.');
     } else if (e.error === 'no-speech') {
-      // Silent — this fires when user pauses, not actually an error worth toasting
+      // Silent — fires when user pauses
     } else if (e.error !== 'aborted') {
       toast('Voice error: ' + e.error);
     }
