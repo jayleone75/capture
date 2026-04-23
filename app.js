@@ -124,6 +124,9 @@ async function dbSetMeta(key, value) {
 // ============================================================================
 
 async function init() {
+  // Render version info immediately so user sees what build they're on
+  renderVersionInfo();
+
   // Load persisted data
   try {
     const notes = await dbGetAll(STORE_NOTES);
@@ -304,6 +307,49 @@ function wireEventListeners() {
 // ============================================================================
 // Actions
 // ============================================================================
+
+function renderVersionInfo() {
+  const v = window.APP_VERSION;
+  if (!v) return;
+  const label = document.getElementById('version-label');
+  if (label) label.textContent = v.number;
+  const build = document.getElementById('build-info');
+  if (build) {
+    build.innerHTML = `<button class="version-btn" id="version-btn">${v.number} · ${v.date}</button>`;
+    document.getElementById('version-btn').addEventListener('click', showChangelog);
+  }
+}
+
+function showChangelog() {
+  const v = window.APP_VERSION;
+  if (!v || !v.changes) return;
+  const text = 'Capture — Changelog\n\n' + v.changes.join('\n\n') +
+    '\n\n─────────\n\nTap OK to close, or Cancel to force-refresh (nukes cache, reloads fresh code).';
+  const shouldRefresh = !confirm(text);
+  if (shouldRefresh) {
+    forceRefresh();
+  }
+}
+
+async function forceRefresh() {
+  try {
+    // Unregister all service workers
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    // Delete all caches
+    if ('caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map(n => caches.delete(n)));
+    }
+    // Hard reload
+    window.location.reload();
+  } catch (e) {
+    alert('Refresh failed: ' + e.message);
+    window.location.reload();
+  }
+}
 
 function clearInput() {
   // Stop recording if active — clean slate

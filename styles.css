@@ -594,6 +594,29 @@ body {
   text-align: center;
 }
 
+.build-info {
+  margin-top: 10px;
+}
+
+.version-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.version-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Toast */
 .toast {
   position: fixed;

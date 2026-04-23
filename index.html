@@ -26,7 +26,7 @@
     <!-- Header -->
     <header class="header">
       <div class="brand">
-        <div class="brand-label">FIELD NOTES · v1</div>
+        <div class="brand-label">FIELD NOTES · <span id="version-label">loading…</span></div>
         <h1 class="brand-title">Capture<span class="accent">.</span></h1>
         <div class="brand-tagline">Catch the thought. Sort it later.</div>
       </div>
@@ -133,7 +133,8 @@
     </section>
 
     <footer class="footer">
-      NOTES SAVED LOCALLY · EXPORT WHEN YOU'RE BACK AT YOUR DESK
+      <div id="footer-version">NOTES SAVED LOCALLY · EXPORT WHEN YOU'RE BACK AT YOUR DESK</div>
+      <div id="build-info" class="build-info"></div>
     </footer>
   </div>
 
@@ -152,11 +153,33 @@
     </div>
   </div>
 
+  <script src="version.js"></script>
   <script src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed:', err));
+        navigator.serviceWorker.register('sw.js').then((reg) => {
+          // Check for updates every time app loads
+          reg.update();
+        }).catch(err => console.log('SW registration failed:', err));
+
+        // Listen for new version notification from service worker
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'SW_UPDATED') {
+            console.log('[App] New version activated:', event.data.version);
+            // Show a brief toast that new version is available; user will see updated UI on next interaction
+            const tag = document.getElementById('version-label');
+            if (tag) tag.textContent = event.data.version + ' ✓';
+          }
+        });
+
+        // If the SW controller changes (new version took over), reload once to pick up fresh assets
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
       });
     }
   </script>
