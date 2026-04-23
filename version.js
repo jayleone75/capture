@@ -7,11 +7,12 @@
 // ============================================================================
 
 const APP_VERSION = {
-  number: 'v2.4',
+  number: 'v2.5',
   date: '2026-04-22',
-  label: 'stable — voice fix confirmed, debug code removed',
+  label: 'extended listening — auto-restart through silence pauses',
   changes: [
-    'v2.4 (Apr 22) — Cleanup: removed debug logging, fixed baseline-to-dictation spacing. Voice confirmed working on Android Chrome.',
+    'v2.5 (Apr 22) — Mic now stays active through silence. Auto-restarts after Chrome shuts it off so you can pause and continue thinking. Tap mic again to actually stop.',
+    'v2.4 (Apr 22) — Cleanup: removed debug logging, fixed baseline-to-dictation spacing',
     'v2.3 (Apr 22) — Added voice debug log + keyboard-fallback voice mode',
     'v2.2 (Apr 22) — Fixed voice echo on mobile: dedup duplicate results',
     'v2.1 (Apr 22) — Visible version display, better PWA refresh',

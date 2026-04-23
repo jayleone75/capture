@@ -37,6 +37,9 @@ let state = {
   secondaryTags: [],       // [{ category, name }]
   customTags: [],          // user-created tag names (persist across sessions)
   isListening: false,
+  sessionActive: false,    // user wants to be recording (may span auto-restarts across silence)
+  userInitiatedStop: false,// true when user tapped stop (vs Chrome auto-stop from silence)
+  autoRestarting: false,   // true during the brief window between onend and recognition.start()
   view: 'capture',         // 'capture' | 'review'
   filterTag: null,
   searchQuery: ''
@@ -170,9 +173,16 @@ function setupSpeechRecognition() {
   let processedResultIds = new Set();
 
   recognition.onstart = () => {
-    baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
-    committedChunks = [];
-    processedResultIds = new Set();
+    // Only reset state on the user-initiated start, not auto-restarts after silence.
+    if (!state.userInitiatedStop) {
+      // Check the flag set in toggleListening to know if this is a fresh session
+      if (state.sessionActive && !state.autoRestarting) {
+        baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
+        committedChunks = [];
+        processedResultIds = new Set();
+      }
+    }
+    state.autoRestarting = false;
   };
 
   recognition.onresult = (event) => {
@@ -208,13 +218,11 @@ function setupSpeechRecognition() {
             continue;
           }
           if (lLower.startsWith(tLower)) {
-            // New is a prefix of existing — skip
             processedResultIds.add(resultId);
             continue;
           }
         }
 
-        // Genuinely new chunk
         committedChunks.push(transcript);
         processedResultIds.add(resultId);
       } else {
@@ -241,7 +249,53 @@ function setupSpeechRecognition() {
   };
 
   recognition.onend = () => {
+    // Auto-restart logic: if the session should still be active (user didn't tap stop),
+    // restart recognition immediately. This defeats Chrome's silence auto-shutoff.
+    if (state.sessionActive && !state.userInitiatedStop) {
+      // Commit any lingering interim text as a real committed chunk, since Chrome
+      // will discard it on restart.
+      const stripped = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
+      if (stripped !== state.currentText.trim()) {
+        state.currentText = stripped;
+        document.getElementById('note-input').value = stripped;
+      }
+
+      // Update baseline to capture whatever we have so far, then reset session state
+      // so the next recognition start treats it as fresh.
+      baseline = stripped;
+      committedChunks = [];
+      processedResultIds = new Set();
+      state.autoRestarting = true;
+
+      try {
+        // Small delay helps some browsers release the mic cleanly before reclaiming
+        setTimeout(() => {
+          if (state.sessionActive && !state.userInitiatedStop) {
+            try {
+              recognition.start();
+            } catch (e) {
+              // If restart fails, give up cleanly
+              state.sessionActive = false;
+              state.isListening = false;
+              state.autoRestarting = false;
+              updateMicUI();
+              updateSaveButton();
+            }
+          }
+        }, 100);
+      } catch (e) {
+        state.sessionActive = false;
+        state.isListening = false;
+        updateMicUI();
+      }
+      return;
+    }
+
+    // Normal end: user tapped stop, or there was an error
     state.isListening = false;
+    state.sessionActive = false;
+    state.userInitiatedStop = false;
+    state.autoRestarting = false;
     const clean = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     state.currentText = clean;
     document.getElementById('note-input').value = clean;
@@ -253,12 +307,20 @@ function setupSpeechRecognition() {
   };
 
   recognition.onerror = (e) => {
+    // 'no-speech' fires after silence — this is exactly what we want to ignore
+    // so auto-restart in onend can kick in.
+    if (e.error === 'no-speech' || e.error === 'aborted') {
+      // Let onend handle it naturally — don't stop the session
+      return;
+    }
+
+    // Real errors: stop the session
     state.isListening = false;
+    state.sessionActive = false;
+    state.userInitiatedStop = false;
     updateMicUI();
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       toast('Mic permission denied. Check browser settings.');
-    } else if (e.error === 'no-speech' || e.error === 'aborted') {
-      // Silent
     } else {
       toast('Voice error: ' + e.error);
     }
@@ -422,14 +484,17 @@ async function forceRefresh() {
 }
 
 function clearInput() {
-  // Stop recording if active — clean slate
-  if (state.isListening && recognition) {
-    try { recognition.stop(); } catch (e) {}
+  // Stop recording if active — clean slate. Mark as user-initiated so we don't auto-restart.
+  if (state.sessionActive) {
+    state.userInitiatedStop = true;
+    state.sessionActive = false;
+    if (recognition) {
+      try { recognition.stop(); } catch (e) {}
+    }
   }
   state.currentText = '';
   document.getElementById('note-input').value = '';
   updateSaveButton();
-  // Refocus so user can immediately start typing or tap mic again
   document.getElementById('note-input').focus();
 }
 
@@ -438,10 +503,8 @@ function toggleListening() {
   const voiceMode = localStorage.getItem('voiceMode') || 'auto';
 
   if (voiceMode === 'keyboard') {
-    // Keyboard mode: just focus the textarea so user can tap Gboard's mic
     const textarea = document.getElementById('note-input');
     textarea.focus();
-    // Position cursor at end
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     toast('Tap the mic on your keyboard');
     return;
@@ -449,18 +512,26 @@ function toggleListening() {
 
   if (!recognition) {
     toast('Voice not supported. Tap the textarea and use your keyboard\'s mic.');
-    // Auto-focus textarea as fallback
     document.getElementById('note-input').focus();
     return;
   }
-  if (state.isListening) {
-    recognition.stop();
+
+  if (state.sessionActive) {
+    // User tapping stop — set flag so onend knows not to auto-restart
+    state.userInitiatedStop = true;
+    state.sessionActive = false;
+    try { recognition.stop(); } catch (e) {}
   } else {
+    // Starting fresh session
+    state.sessionActive = true;
+    state.userInitiatedStop = false;
+    state.autoRestarting = false;
     state.isListening = true;
     updateMicUI();
     try {
       recognition.start();
     } catch (e) {
+      state.sessionActive = false;
       state.isListening = false;
       updateMicUI();
     }
@@ -486,7 +557,14 @@ async function saveNote() {
     state.primaryTag = null;
     state.secondaryTags = [];
     document.getElementById('note-input').value = '';
-    if (state.isListening && recognition) recognition.stop();
+    // Stop recording cleanly without triggering auto-restart
+    if (state.sessionActive) {
+      state.userInitiatedStop = true;
+      state.sessionActive = false;
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
+    }
     renderAll();
     toast('Note saved');
   } catch (e) {
