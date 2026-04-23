@@ -7,11 +7,12 @@
 // ============================================================================
 
 const APP_VERSION = {
-  number: 'v2.2',
+  number: 'v2.3',
   date: '2026-04-22',
-  label: 'mobile voice echo fix (Android Chrome)',
+  label: 'debug log + keyboard fallback mode',
   changes: [
-    'v2.2 (Apr 22) — Fixed voice echo on mobile Chrome/Android: dedup against duplicate finalized results',
+    'v2.3 (Apr 22) — Added voice debug log (tap version # to see). Added keyboard-fallback voice mode for unreliable Web Speech API.',
+    'v2.2 (Apr 22) — Fixed voice echo on mobile: dedup duplicate results',
     'v2.1 (Apr 22) — Visible version display, better PWA refresh',
     'v2.0 (Apr 22) — Fixed voice transcription echo on desktop, added Clear button',
     'v1.0 (Apr 22) — Initial release: capture, tag, review, export'

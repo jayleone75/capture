@@ -154,6 +154,16 @@ async function init() {
   });
 }
 
+// Debug log for speech recognition — viewable via footer version button
+let speechDebugLog = [];
+
+function logSpeechEvent(entry) {
+  const timestamp = new Date().toISOString().slice(11, 23);
+  speechDebugLog.push(`[${timestamp}] ${entry}`);
+  // Keep last 100 entries
+  if (speechDebugLog.length > 100) speechDebugLog.shift();
+}
+
 function setupSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return;
@@ -164,28 +174,28 @@ function setupSpeechRecognition() {
   recognition.lang = 'en-US';
 
   // State held across onresult events for this recording session.
-  //
-  // Mobile browsers (especially Chrome on Android and Safari on iOS) emit duplicate
-  // finalized results — the same phrase arrives 2-3 times across successive events
-  // with different result indices. Desktop Chrome does NOT do this.
-  //
-  // Strategy:
-  //   1. Track a baseline (textarea contents when recording started — untouched during session)
-  //   2. Commit finalized chunks, deduped against the *most recently committed* chunk
-  //      (recency-based, not global — so saying "very very fast" still works correctly)
-  //   3. Always use only the latest interim result as the live preview
   let baseline = '';
   let committedChunks = [];      // ordered list of finalized phrases we've accepted
-  let lastFinalResultIndex = -1;
+  let processedResultIds = new Set(); // dedup by result identity
 
   recognition.onstart = () => {
     baseline = (state.currentText || '').replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     committedChunks = [];
-    lastFinalResultIndex = -1;
+    processedResultIds = new Set();
+    speechDebugLog = [];
+    logSpeechEvent(`START — baseline: "${baseline}"`);
   };
 
   recognition.onresult = (event) => {
     let latestInterim = '';
+
+    // Log raw event data for diagnostics
+    const resultSummary = [];
+    for (let i = 0; i < event.results.length; i++) {
+      const r = event.results[i];
+      resultSummary.push(`[${i}]${r.isFinal?'F':'i'}:"${r[0].transcript.trim()}"`);
+    }
+    logSpeechEvent(`onresult (resultIndex=${event.resultIndex}, len=${event.results.length}): ${resultSummary.join(' ')}`);
 
     for (let i = 0; i < event.results.length; i++) {
       const result = event.results[i];
@@ -193,33 +203,51 @@ function setupSpeechRecognition() {
       if (!transcript) continue;
 
       if (result.isFinal) {
-        // Only process results with an index we haven't handled yet.
-        // This is the primary guard against Chrome-Android re-emitting earlier finalized
-        // results in a subsequent onresult event.
-        if (i <= lastFinalResultIndex) continue;
+        // Build a unique-ish identifier combining index AND the transcript text.
+        // If Chrome re-emits the same text at the same index, this will be seen.
+        // If it re-emits at a DIFFERENT index, we still catch it via the text match below.
+        const resultId = `${i}:${transcript.toLowerCase()}`;
 
-        // Secondary guard: if this exact text matches what we last committed,
-        // it's a duplicate emission — skip it.
-        const lastCommitted = committedChunks[committedChunks.length - 1] || '';
-        if (transcript.toLowerCase() === lastCommitted.toLowerCase()) {
-          lastFinalResultIndex = i;
+        if (processedResultIds.has(resultId)) {
+          logSpeechEvent(`  SKIP (already processed id=${resultId})`);
           continue;
         }
 
-        // Tertiary guard: if the new chunk is contained in the last committed chunk
-        // (or vice versa), it's likely a partial re-emission — skip.
+        // Also check: is this text already in committed chunks? Exact match = duplicate.
         const tLower = transcript.toLowerCase();
-        const lLower = lastCommitted.toLowerCase();
-        if (lLower && (lLower.includes(tLower) || tLower.includes(lLower)) &&
-            Math.abs(tLower.length - lLower.length) < 4) {
-          lastFinalResultIndex = i;
+        const alreadyCommitted = committedChunks.some(c => c.toLowerCase() === tLower);
+        if (alreadyCommitted) {
+          logSpeechEvent(`  SKIP (text already committed: "${transcript}")`);
+          processedResultIds.add(resultId);
           continue;
         }
 
+        // Check: is this text a prefix/suffix of something we committed? Likely duplicate growth.
+        const lastCommitted = committedChunks[committedChunks.length - 1] || '';
+        const lLower = lastCommitted.toLowerCase();
+        if (lLower && tLower !== lLower) {
+          // If new text starts with last committed OR last committed starts with new text,
+          // it's probably the same phrase at a different completion stage.
+          if (tLower.startsWith(lLower) && tLower.length > lLower.length) {
+            // Extend the last chunk — replace it with the longer version
+            logSpeechEvent(`  EXTEND ("${lastCommitted}" -> "${transcript}")`);
+            committedChunks[committedChunks.length - 1] = transcript;
+            processedResultIds.add(resultId);
+            continue;
+          }
+          if (lLower.startsWith(tLower)) {
+            // New text is a prefix of what we already have — skip
+            logSpeechEvent(`  SKIP (prefix of existing)`);
+            processedResultIds.add(resultId);
+            continue;
+          }
+        }
+
+        // Genuinely new chunk — commit it
         committedChunks.push(transcript);
-        lastFinalResultIndex = i;
+        processedResultIds.add(resultId);
+        logSpeechEvent(`  COMMIT ("${transcript}")`);
       } else {
-        // Always overwrite interim with the latest.
         latestInterim = transcript;
       }
     }
@@ -247,9 +275,10 @@ function setupSpeechRecognition() {
     const clean = state.currentText.replace(/\s*\[listening\.\.\.\].*$/, '').trim();
     state.currentText = clean;
     document.getElementById('note-input').value = clean;
+    logSpeechEvent(`END — final text: "${clean}"`);
     baseline = '';
     committedChunks = [];
-    lastFinalResultIndex = -1;
+    processedResultIds = new Set();
     updateMicUI();
     updateSaveButton();
   };
@@ -257,10 +286,11 @@ function setupSpeechRecognition() {
   recognition.onerror = (e) => {
     state.isListening = false;
     updateMicUI();
+    logSpeechEvent(`ERROR: ${e.error}`);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       toast('Mic permission denied. Check browser settings.');
     } else if (e.error === 'no-speech') {
-      // Silent — fires when user pauses
+      // Silent
     } else if (e.error !== 'aborted') {
       toast('Voice error: ' + e.error);
     }
@@ -362,12 +392,60 @@ function renderVersionInfo() {
 
 function showChangelog() {
   const v = window.APP_VERSION;
-  if (!v || !v.changes) return;
-  const text = 'Capture — Changelog\n\n' + v.changes.join('\n\n') +
-    '\n\n─────────\n\nTap OK to close, or Cancel to force-refresh (nukes cache, reloads fresh code).';
-  const shouldRefresh = !confirm(text);
-  if (shouldRefresh) {
+  if (!v) return;
+
+  const voiceMode = localStorage.getItem('voiceMode') || 'auto';
+  const modeLabel = voiceMode === 'keyboard' ? 'Keyboard mic (Gboard)' : 'Web Speech API (auto)';
+
+  const changelogText = v.changes.join('\n\n');
+  const debugText = speechDebugLog.length > 0
+    ? '\n\n─── LAST VOICE SESSION LOG ───\n' + speechDebugLog.join('\n')
+    : '\n\n(No voice session logged yet — record something, then come back here.)';
+
+  const fullText =
+    `Capture ${v.number} · ${v.date}\n\n` +
+    `Voice mode: ${modeLabel}\n\n` +
+    `─── CHANGELOG ───\n${changelogText}` +
+    debugText;
+
+  // Use a prompt-style dialog so user can copy the text. Fallback to alert.
+  const choice = confirm(
+    fullText +
+    '\n\n─────────\n' +
+    'OK: close\n' +
+    'Cancel: show options menu'
+  );
+
+  if (!choice) {
+    showOptionsMenu();
+  }
+}
+
+function showOptionsMenu() {
+  const current = localStorage.getItem('voiceMode') || 'auto';
+  const options =
+    'Options:\n\n' +
+    '1 — Switch voice mode (current: ' + (current === 'keyboard' ? 'keyboard mic' : 'Web Speech') + ')\n' +
+    '2 — Force refresh (nuke cache, reload fresh)\n' +
+    '3 — Copy debug log to clipboard\n\n' +
+    'Type 1, 2, or 3:';
+
+  const input = prompt(options, '');
+  if (input === '1') {
+    const newMode = current === 'keyboard' ? 'auto' : 'keyboard';
+    localStorage.setItem('voiceMode', newMode);
+    alert(`Voice mode set to: ${newMode === 'keyboard' ? 'Keyboard mic (Gboard)' : 'Web Speech API'}\n\nReload to apply.`);
+    window.location.reload();
+  } else if (input === '2') {
     forceRefresh();
+  } else if (input === '3') {
+    const log = speechDebugLog.join('\n') || '(empty)';
+    navigator.clipboard.writeText(log).then(() => {
+      alert('Debug log copied to clipboard. Paste it into Claude chat.');
+    }).catch(() => {
+      // Fallback — show in a prompt so user can manually copy
+      prompt('Copy this debug log:', log);
+    });
   }
 }
 
@@ -404,8 +482,23 @@ function clearInput() {
 }
 
 function toggleListening() {
+  // Check voice mode preference
+  const voiceMode = localStorage.getItem('voiceMode') || 'auto';
+
+  if (voiceMode === 'keyboard') {
+    // Keyboard mode: just focus the textarea so user can tap Gboard's mic
+    const textarea = document.getElementById('note-input');
+    textarea.focus();
+    // Position cursor at end
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    toast('Tap the mic on your keyboard');
+    return;
+  }
+
   if (!recognition) {
-    toast('Voice not supported. Try your keyboard\'s mic button.');
+    toast('Voice not supported. Tap the textarea and use your keyboard\'s mic.');
+    // Auto-focus textarea as fallback
+    document.getElementById('note-input').focus();
     return;
   }
   if (state.isListening) {
